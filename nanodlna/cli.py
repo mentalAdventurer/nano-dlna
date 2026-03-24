@@ -128,7 +128,7 @@ def play(args):
 
     # Play the video through DLNA protocol
     logging.info("Sending play command")
-    dlna.play(files_urls, device)
+    dlna.play(files, files_urls, device)
 
 
 def build_handler_stop(device):
@@ -175,6 +175,29 @@ def stop(args):
     dlna.stop(device)
 
 
+def seek(args):
+
+    set_logs(args)
+
+    logging.info("Selecting device to seek")
+    device = find_device(args)
+
+    if not device:
+        sys.exit("No devices found.")
+
+    unit = "REL_TIME" if args.relative_seek else "ABS_TIME"
+
+    logging.info(
+        "Sending seek command: {}".format(
+            json.dumps({
+                "unit": unit,
+                "target": args.seek_target
+            })
+        )
+    )
+    dlna.seek(device, args.seek_target, unit=unit)
+
+
 def run():
 
     parser = argparse.ArgumentParser(
@@ -207,6 +230,14 @@ def run():
     p_stop.add_argument("-d", "--device", dest="device_url")
     p_stop.add_argument("-q", "--query-device", dest="device_query")
     p_stop.set_defaults(func=stop)
+
+    p_seek = subparsers.add_parser('seek')
+    p_seek.add_argument("-d", "--device", dest="device_url")
+    p_seek.add_argument("-q", "--query-device", dest="device_query")
+    p_seek.add_argument("-r", "--relative",
+                        dest="relative_seek", action="store_true")
+    p_seek.add_argument("seek_target")
+    p_seek.set_defaults(func=seek)
 
     args = parser.parse_args()
 

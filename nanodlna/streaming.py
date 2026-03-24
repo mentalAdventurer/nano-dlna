@@ -6,6 +6,7 @@ import socket
 import threading
 import unicodedata
 import re
+import mimetypes
 
 from twisted.internet import reactor
 from twisted.web.resource import Resource
@@ -18,6 +19,16 @@ import json
 # from twisted.python import log
 
 
+DLNA_FLAGS = "01700000000000000000000000000000"
+DLNA_PROTOCOL_BY_EXTENSION = {
+    ".avi": "DLNA.ORG_PN=AVI",
+    ".m4v": "DLNA.ORG_PN=AVC_MP4_BL_CIF15_AAC_520",
+    ".mkv": "DLNA.ORG_PN=MATROSKA",
+    ".mov": "DLNA.ORG_PN=AVC_MP4_BL_CIF15_AAC_520",
+    ".mp4": "DLNA.ORG_PN=AVC_MP4_BL_CIF15_AAC_520",
+}
+
+
 def normalize_file_name(value):
     value = unicodedata\
         .normalize("NFKD", value)\
@@ -26,6 +37,44 @@ def normalize_file_name(value):
     value = re.sub(r"[^\.\w\s-]", "", value.lower())
     value = re.sub(r"[-\s]+", "-", value).strip("-_")
     return value
+
+
+def build_content_features(file_path):
+    extension = os.path.splitext(file_path)[1].lower()
+    mime_type = (
+        mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    )
+    dlna_profile = DLNA_PROTOCOL_BY_EXTENSION.get(extension)
+
+    attributes = []
+    if dlna_profile:
+        attributes.append(dlna_profile)
+    attributes.extend([
+        "DLNA.ORG_OP=01",
+        "DLNA.ORG_CI=0",
+        "DLNA.ORG_FLAGS={0}".format(DLNA_FLAGS)
+    ])
+
+    return "http-get:*:{0}:{1}".format(mime_type, ";".join(attributes))
+
+
+class StreamingFile(File):
+
+    def __init__(self, path, defaultType="application/octet-stream"):
+        File.__init__(self, path, defaultType=defaultType)
+        self.content_features = build_content_features(path)
+
+    def _set_stream_headers(self, request):
+        request.setHeader(b"Accept-Ranges", b"bytes")
+        request.setHeader(
+            b"contentFeatures.dlna.org",
+            self.content_features.encode("utf-8")
+        )
+        request.setHeader(b"transferMode.dlna.org", b"Streaming")
+
+    def render(self, request):
+        self._set_stream_headers(request)
+        return File.render(self, request)
 
 
 def set_files(files, serve_ip, serve_port):
@@ -78,7 +127,7 @@ def start_server(files, serve_ip, serve_port=9000):
     for file_key, (file_name, file_path, file_dir) in files_index.items():
         root.putChild(file_key.encode("utf-8"), Resource())
         root.children[file_key.encode("utf-8")].putChild(
-            file_name.encode("utf-8"), File(file_path))
+            file_name.encode("utf-8"), StreamingFile(file_path))
 
     logging.debug("Starting to listen messages in HTTP server")
     reactor.listenTCP(serve_port, Site(root))
